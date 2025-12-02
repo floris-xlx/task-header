@@ -5,7 +5,7 @@ Navigation window for browsing Linear teams, projects, and issues.
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit, QListWidget, QListWidgetItem,
-    QTabWidget, QMessageBox, QInputDialog, QTextEdit
+    QTabWidget, QMessageBox, QInputDialog, QTextEdit, QSlider, QSpinBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -152,6 +152,9 @@ class NavigationWindow(QMainWindow):
         # Tab widget for different views
         self.tab_widget = QTabWidget()
         
+        # Connect tab change event for instant refresh
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+        
         # Teams tab
         self.teams_tab = self._create_teams_tab()
         self.tab_widget.addTab(self.teams_tab, "Teams")
@@ -171,6 +174,10 @@ class NavigationWindow(QMainWindow):
         # Custom Task tab
         self.custom_task_tab = self._create_custom_task_tab()
         self.tab_widget.addTab(self.custom_task_tab, "Custom Task")
+        
+        # Settings tab
+        self.settings_tab = self._create_settings_tab()
+        self.tab_widget.addTab(self.settings_tab, "Settings")
         
         layout.addWidget(self.tab_widget)
         
@@ -311,6 +318,88 @@ class NavigationWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
     
+    def _create_settings_tab(self) -> QWidget:
+        """Create settings tab for appearance customization."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(20)
+        
+        # Header width setting
+        width_group = QVBoxLayout()
+        width_label = QLabel("Header Width (% of screen):")
+        width_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        width_group.addWidget(width_label)
+        
+        width_layout = QHBoxLayout()
+        self.width_slider = QSlider(Qt.Orientation.Horizontal)
+        self.width_slider.setMinimum(10)
+        self.width_slider.setMaximum(100)
+        self.width_slider.setValue(self.config.get("window.header_width", 50))
+        self.width_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.width_slider.setTickInterval(10)
+        
+        self.width_spinbox = QSpinBox()
+        self.width_spinbox.setMinimum(10)
+        self.width_spinbox.setMaximum(100)
+        self.width_spinbox.setValue(self.config.get("window.header_width", 50))
+        self.width_spinbox.setSuffix("%")
+        
+        # Connect slider and spinbox
+        self.width_slider.valueChanged.connect(self.width_spinbox.setValue)
+        self.width_spinbox.valueChanged.connect(self.width_slider.setValue)
+        self.width_slider.valueChanged.connect(self._on_width_changed)
+        
+        width_layout.addWidget(self.width_slider, 3)
+        width_layout.addWidget(self.width_spinbox, 1)
+        width_group.addLayout(width_layout)
+        
+        layout.addLayout(width_group)
+        
+        # Transparency setting
+        transparency_group = QVBoxLayout()
+        transparency_label = QLabel("Background Transparency:")
+        transparency_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        transparency_group.addWidget(transparency_label)
+        
+        transparency_layout = QHBoxLayout()
+        self.transparency_slider = QSlider(Qt.Orientation.Horizontal)
+        self.transparency_slider.setMinimum(0)
+        self.transparency_slider.setMaximum(100)
+        self.transparency_slider.setValue(self.config.get("window.transparency", 100))
+        self.transparency_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.transparency_slider.setTickInterval(10)
+        
+        self.transparency_spinbox = QSpinBox()
+        self.transparency_spinbox.setMinimum(0)
+        self.transparency_spinbox.setMaximum(100)
+        self.transparency_spinbox.setValue(self.config.get("window.transparency", 100))
+        self.transparency_spinbox.setSuffix("%")
+        
+        # Connect slider and spinbox
+        self.transparency_slider.valueChanged.connect(self.transparency_spinbox.setValue)
+        self.transparency_spinbox.valueChanged.connect(self.transparency_slider.setValue)
+        self.transparency_slider.valueChanged.connect(self._on_transparency_changed)
+        
+        transparency_layout.addWidget(self.transparency_slider, 3)
+        transparency_layout.addWidget(self.transparency_spinbox, 1)
+        transparency_group.addLayout(transparency_layout)
+        
+        transparency_hint = QLabel("0% = fully transparent, 100% = fully opaque")
+        transparency_hint.setStyleSheet("color: #888888; font-size: 12px;")
+        transparency_group.addWidget(transparency_hint)
+        
+        layout.addLayout(transparency_group)
+        
+        # Apply button
+        apply_btn = QPushButton("Apply Settings")
+        apply_btn.clicked.connect(self._apply_settings)
+        layout.addWidget(apply_btn)
+        
+        layout.addStretch()
+        
+        widget.setLayout(layout)
+        return widget
+    
     def _save_api_key(self):
         """Save API key to configuration."""
         api_key = self.api_key_input.text().strip()
@@ -325,6 +414,9 @@ class NavigationWindow(QMainWindow):
         # Update Linear client
         from linear_client import LinearClient
         self.linear_client = LinearClient(api_key)
+        
+        # Instant refresh: reload current tab content
+        self._refresh_current_tab()
         
         QMessageBox.information(self, "Success", "API key saved successfully")
     
@@ -353,6 +445,9 @@ class NavigationWindow(QMainWindow):
         team = item.data(Qt.ItemDataRole.UserRole)
         self.current_team = team
         self.projects_info_label.setText(f"Team: {team['name']}")
+        
+        # Instant refresh: load projects for the selected team
+        self._load_projects_silently()
     
     def _view_team_issues(self):
         """View issues for the selected team."""
@@ -401,6 +496,9 @@ class NavigationWindow(QMainWindow):
         """Handle project selection."""
         project = item.data(Qt.ItemDataRole.UserRole)
         self.current_project = project
+        
+        # Instant refresh: load issues for the selected project
+        self._view_project_issues_silently()
     
     def _view_project_issues(self):
         """View issues for the selected project."""
@@ -421,11 +519,17 @@ class NavigationWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load issues: {str(e)}")
     
     def _display_issues(self, issues: List[Dict[str, Any]], info: str):
-        """Display issues in the issues list."""
+        """Display issues in the issues list (excluding done issues)."""
         self.issues_info_label.setText(info)
         self.issues_list.clear()
         
-        for issue in issues:
+        # Filter out done/completed issues
+        filtered_issues = [
+            issue for issue in issues 
+            if issue.get('state', {}).get('type', '').lower() not in ['completed', 'canceled']
+        ]
+        
+        for issue in filtered_issues:
             state_name = issue.get('state', {}).get('name', 'Unknown')
             item_text = f"{issue['identifier']}: {issue['title']} [{state_name}]"
             item = QListWidgetItem(item_text)
@@ -449,7 +553,7 @@ class NavigationWindow(QMainWindow):
         QMessageBox.information(self, "Success", f"Set {issue['identifier']} as active issue")
     
     def _load_my_issues(self):
-        """Load issues assigned to the current user."""
+        """Load issues assigned to the current user (excluding done issues)."""
         if not self.linear_client:
             QMessageBox.warning(self, "Error", "Please configure Linear API key first")
             return
@@ -458,7 +562,13 @@ class NavigationWindow(QMainWindow):
             issues = self.linear_client.get_my_issues()
             self.my_issues_list.clear()
             
-            for issue in issues:
+            # Filter out done/completed issues
+            filtered_issues = [
+                issue for issue in issues 
+                if issue.get('state', {}).get('type', '').lower() not in ['completed', 'canceled']
+            ]
+            
+            for issue in filtered_issues:
                 state_name = issue.get('state', {}).get('name', 'Unknown')
                 team_key = issue.get('team', {}).get('key', 'N/A')
                 item_text = f"[{team_key}] {issue['identifier']}: {issue['title']} [{state_name}]"
@@ -466,7 +576,7 @@ class NavigationWindow(QMainWindow):
                 item.setData(Qt.ItemDataRole.UserRole, issue)
                 self.my_issues_list.addItem(item)
             
-            QMessageBox.information(self, "Success", f"Loaded {len(issues)} issues")
+            QMessageBox.information(self, "Success", f"Loaded {len(filtered_issues)} active issues (done issues hidden)")
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load issues: {str(e)}")
@@ -562,4 +672,145 @@ class NavigationWindow(QMainWindow):
             self.on_custom_task(task)
         
         QMessageBox.information(self, "Success", "Custom task set as active")
+    
+    def _on_tab_changed(self, index: int):
+        """Handle tab change event for instant refresh."""
+        if not self.linear_client:
+            return
+        
+        # Get the current tab widget
+        current_tab = self.tab_widget.currentWidget()
+        
+        try:
+            # Auto-refresh based on which tab is opened
+            if current_tab == self.teams_tab:
+                self._load_teams_silently()
+            elif current_tab == self.projects_tab:
+                if self.current_team:
+                    self._load_projects_silently()
+            elif current_tab == self.issues_tab:
+                # Refresh issues if we have a context
+                if self.current_project:
+                    self._view_project_issues_silently()
+                elif self.current_team:
+                    self._view_team_issues_silently()
+            elif current_tab == self.my_issues_tab:
+                self._load_my_issues_silently()
+        except Exception as e:
+            # Silent refresh - don't show error popups
+            print(f"Auto-refresh error: {e}")
+    
+    def _refresh_current_tab(self):
+        """Refresh the content of the currently active tab."""
+        current_index = self.tab_widget.currentIndex()
+        self._on_tab_changed(current_index)
+    
+    def _load_teams_silently(self):
+        """Load teams without showing success popup."""
+        if not self.linear_client:
+            return
+        
+        try:
+            teams = self.linear_client.get_teams()
+            self.teams_list.clear()
+            
+            for team in teams:
+                item = QListWidgetItem(f"{team['name']} ({team['key']})")
+                item.setData(Qt.ItemDataRole.UserRole, team)
+                self.teams_list.addItem(item)
+        except Exception as e:
+            print(f"Failed to load teams: {e}")
+    
+    def _load_projects_silently(self):
+        """Load projects without showing success popup."""
+        if not self.current_team or not self.linear_client:
+            return
+        
+        try:
+            projects = self.linear_client.get_team_projects(self.current_team['id'])
+            self.projects_list.clear()
+            
+            for project in projects:
+                item = QListWidgetItem(f"{project['name']} - {project.get('state', 'N/A')}")
+                item.setData(Qt.ItemDataRole.UserRole, project)
+                self.projects_list.addItem(item)
+        except Exception as e:
+            print(f"Failed to load projects: {e}")
+    
+    def _view_team_issues_silently(self):
+        """View team issues without showing success popup."""
+        if not self.current_team or not self.linear_client:
+            return
+        
+        try:
+            issues = self.linear_client.get_team_issues(self.current_team['id'])
+            self._display_issues(issues, f"Team: {self.current_team['name']}")
+        except Exception as e:
+            print(f"Failed to load team issues: {e}")
+    
+    def _view_project_issues_silently(self):
+        """View project issues without showing success popup."""
+        if not self.current_project or not self.linear_client:
+            return
+        
+        try:
+            issues = self.linear_client.get_project_issues(self.current_project['id'])
+            self._display_issues(issues, f"Project: {self.current_project['name']}")
+        except Exception as e:
+            print(f"Failed to load project issues: {e}")
+    
+    def _load_my_issues_silently(self):
+        """Load my issues without showing success popup."""
+        if not self.linear_client:
+            return
+        
+        try:
+            issues = self.linear_client.get_my_issues()
+            self.my_issues_list.clear()
+            
+            # Filter out done/completed issues
+            filtered_issues = [
+                issue for issue in issues 
+                if issue.get('state', {}).get('type', '').lower() not in ['completed', 'canceled']
+            ]
+            
+            for issue in filtered_issues:
+                state_name = issue.get('state', {}).get('name', 'Unknown')
+                team_key = issue.get('team', {}).get('key', 'N/A')
+                item_text = f"[{team_key}] {issue['identifier']}: {issue['title']} [{state_name}]"
+                item = QListWidgetItem(item_text)
+                item.setData(Qt.ItemDataRole.UserRole, issue)
+                self.my_issues_list.addItem(item)
+        except Exception as e:
+            print(f"Failed to load my issues: {e}")
+    
+    def _on_width_changed(self, value: int):
+        """Handle width slider change."""
+        # Just update the display, actual save happens on apply
+        pass
+    
+    def _on_transparency_changed(self, value: int):
+        """Handle transparency slider change."""
+        # Just update the display, actual save happens on apply
+        pass
+    
+    def _apply_settings(self):
+        """Apply and save appearance settings."""
+        width = self.width_slider.value()
+        transparency = self.transparency_slider.value()
+        
+        self.config.set("window.header_width", width)
+        self.config.set("window.transparency", transparency)
+        self.config.save()
+        
+        QMessageBox.information(
+            self,
+            "Settings Applied",
+            "Settings saved! The changes will be applied to the header.\n\n"
+            "The header will update immediately if it's currently visible."
+        )
+        
+        # Notify sticky header to update (if we have a reference to it)
+        if hasattr(self, 'on_settings_applied'):
+            self.on_settings_applied()
 

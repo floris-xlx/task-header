@@ -44,3 +44,6 @@ Thumbs.db
 issues-*.md
 my-issues.md
 
+env.example
+*.example
+env.example

@@ -5,10 +5,10 @@ Always stays on top and cannot be covered by other windows.
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QComboBox, QApplication
+    QComboBox, QApplication, QGraphicsOpacityEffect
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QScreen
+from PyQt6.QtCore import Qt, QTimer, QEvent
+from PyQt6.QtGui import QFont, QScreen, QEnterEvent
 from typing import Optional, Dict, Any, List, Callable
 
 
@@ -29,9 +29,11 @@ class StickyHeaderWidget(QWidget):
         self.current_issue: Optional[Dict[str, Any]] = None
         self.workflow_states: List[Dict[str, Any]] = []
         self.on_state_changed: Optional[Callable] = None
+        self.controls_visible = False
         
         self._init_ui()
         self._position_window()
+        self._apply_appearance()
         
         # Load current issue if set
         if self.config.current_issue_id and self.linear_client:
@@ -47,51 +49,7 @@ class StickyHeaderWidget(QWidget):
         )
         
         # Make window semi-transparent background
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                border: 2px solid #007acc;
-                border-radius: 8px;
-            }
-            QLabel {
-                background-color: transparent;
-                border: none;
-            }
-            QPushButton {
-                background-color: #007acc;
-                border: none;
-                border-radius: 4px;
-                padding: 5px 10px;
-                color: white;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
-            QPushButton:pressed {
-                background-color: #004578;
-            }
-            QComboBox {
-                background-color: #2d2d2d;
-                border: 1px solid #007acc;
-                border-radius: 4px;
-                padding: 5px;
-                color: white;
-                font-size: 14px;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid white;
-                margin-right: 5px;
-            }
-        """)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         
         # Main layout
         layout = QVBoxLayout()
@@ -166,13 +124,22 @@ class StickyHeaderWidget(QWidget):
         layout.addLayout(status_layout)
         
         self.setLayout(layout)
+        
+        # Enable mouse tracking for this widget and all children
+        self.setMouseTracking(True)
+        for child in self.findChildren(QWidget):
+            child.setMouseTracking(True)
+        
+        # Initially hide controls
+        self._hide_controls()
     
     def _position_window(self):
         """Position window at top-middle of screen."""
         screen: QScreen = QApplication.primaryScreen()
         screen_geometry = screen.geometry()
         
-        width_percent = self.config.get("window.width_percent", 10)
+        # Use header_width for the sticky header width
+        width_percent = self.config.get("window.header_width", 50)
         height_percent = self.config.get("window.height_percent", 10)
         
         width = int(screen_geometry.width() * width_percent / 100)
@@ -337,4 +304,116 @@ class StickyHeaderWidget(QWidget):
         self.status_combo.clear()
         self.config.current_issue_id = None
         self.config.save()
+    
+    def _apply_appearance(self):
+        """Apply transparency and styling to the window."""
+        transparency = self.config.get("window.transparency", 100)
+        
+        # Calculate opacity (0.0 to 1.0)
+        opacity = transparency / 100.0
+        
+        # Calculate RGB with transparency for background
+        # Use RGBA format in stylesheet
+        alpha = int(255 * opacity)
+        
+        # Text should never go below 10% opacity (26/255)
+        text_alpha = max(26, alpha)
+        
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: rgba(30, 30, 30, {alpha});
+                color: rgba(255, 255, 255, {text_alpha});
+                border: 2px solid rgba(0, 122, 204, {alpha});
+                border-radius: 8px;
+            }}
+            QLabel {{
+                background-color: transparent;
+                border: none;
+                color: rgba(255, 255, 255, {text_alpha});
+            }}
+            QPushButton {{
+                background-color: rgba(0, 122, 204, {alpha});
+                border: none;
+                border-radius: 4px;
+                padding: 5px 10px;
+                color: rgba(255, 255, 255, {text_alpha});
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(0, 90, 158, {alpha});
+            }}
+            QPushButton:pressed {{
+                background-color: rgba(0, 69, 120, {alpha});
+            }}
+            QComboBox {{
+                background-color: rgba(45, 45, 45, {alpha});
+                border: 1px solid rgba(0, 122, 204, {alpha});
+                border-radius: 4px;
+                padding: 5px;
+                color: rgba(255, 255, 255, {text_alpha});
+                font-size: 14px;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid rgba(255, 255, 255, {text_alpha});
+                margin-right: 5px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: rgba(45, 45, 45, 255);
+                color: rgba(255, 255, 255, 255);
+                selection-background-color: rgba(0, 122, 204, 255);
+            }}
+        """)
+        
+        # Reposition window with new width
+        self._position_window()
+    
+    def _hide_controls(self):
+        """Hide status, close button, and settings button."""
+        self.close_btn.hide()
+        self.settings_btn.hide()
+        self.status_label.hide()
+        self.status_combo.hide()
+        self.controls_visible = False
+    
+    def _show_controls(self):
+        """Show status, close button, and settings button."""
+        self.close_btn.show()
+        self.settings_btn.show()
+        self.status_label.show()
+        self.status_combo.show()
+        self.controls_visible = True
+    
+    def enterEvent(self, event: QEnterEvent):
+        """Handle mouse entering the widget."""
+        if not self.controls_visible:
+            self._show_controls()
+        super().enterEvent(event)
+    
+    def leaveEvent(self, event: QEvent):
+        """Handle mouse leaving the widget."""
+        if self.controls_visible:
+            self._hide_controls()
+        super().leaveEvent(event)
+    
+    def event(self, event: QEvent) -> bool:
+        """Handle all events to catch mouse position."""
+        if event.type() == QEvent.Type.MouseMove:
+            # Check if mouse is within widget bounds
+            if self.rect().contains(self.mapFromGlobal(self.cursor().pos())):
+                if not self.controls_visible:
+                    self._show_controls()
+            else:
+                if self.controls_visible:
+                    self._hide_controls()
+        return super().event(event)
+    
+    def update_appearance(self):
+        """Update appearance settings (called from settings)."""
+        self._apply_appearance()
 

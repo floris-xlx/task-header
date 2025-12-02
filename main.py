@@ -56,6 +56,9 @@ class LinearTaskHeaderApp:
         
         # Handle state changes in sticky header
         self.sticky_header.on_state_changed = self._on_state_changed
+        
+        # Handle settings applied
+        self.navigation_window.on_settings_applied = self._on_settings_applied
     
     def _setup_hotkey(self):
         """Setup global hotkey for toggling navigation window."""
@@ -150,6 +153,12 @@ class LinearTaskHeaderApp:
         """
         print(f"Issue {issue_id} state changed to {state_id}")
         # Could trigger markdown regeneration here if needed
+    
+    def _on_settings_applied(self):
+        """Handle settings being applied from navigation window."""
+        # Update sticky header appearance
+        self.sticky_header.update_appearance()
+        print("Header appearance updated")
     
     def run(self):
         """Run the application."""

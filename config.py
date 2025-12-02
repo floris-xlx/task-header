@@ -47,7 +47,9 @@ class Config:
             "window": {
                 "width_percent": 10,
                 "height_percent": 10,
-                "position": "top-middle"
+                "position": "top-middle",
+                "transparency": 100,
+                "header_width": 50
             },
             "current_issue_id": None,
             "font_size": 40,
